@@ -23,17 +23,32 @@ def cmd_probe(args) -> None:
                 print(f'{name:>10} {rid:02x} {sub:02x} -> {e}')
 
 
+def _bt_only_status() -> bool:
+    """Print a Bluetooth-mode status line and return True if the mouse is on BT and unresponsive."""
+    bt = p.find_bluetooth_node()
+    if bt:
+        print(f'Device:     {bt.path} (bluetooth)')
+        print('Configuration unavailable over Bluetooth – connect the USB cable or wireless dongle.')
+        return True
+    return False
+
+
 def cmd_status(args) -> None:
-    with p.Device() as dev:
-        b = dev.battery()
-        t = dev.dpi_table()
-        print(f'Device:     {dev.node.path} ({dev.node.mode})')
-        print(f'Battery:    {b.percent}%  {b.state_text}  {b.voltage_mv} mV  {b.temperature_c} °C')
-        print(f'Polling:    {t.polling_hz} Hz')
-        for i, (s, on) in enumerate(zip(t.stages, t.enabled)):
-            mark = '*' if i == t.active else ' '
-            print(f'DPI {i + 1}: {mark} {s.dpi:>5}  #{bytes(s.color).hex()}  {"" if on else "(disabled)"}')
-        print(f'Brightness: {round(dev.brightness() * 100 / 255)}%')
+    try:
+        with p.Device() as dev:
+            b = dev.battery()
+            t = dev.dpi_table()
+            print(f'Device:     {dev.node.path} ({dev.node.mode})')
+            print(f'Battery:    {b.percent}%  {b.state_text}  {b.voltage_mv} mV  {b.temperature_c} °C')
+            print(f'Polling:    {t.polling_hz} Hz')
+            for i, (s, on) in enumerate(zip(t.stages, t.enabled)):
+                mark = '*' if i == t.active else ' '
+                print(f'DPI {i + 1}: {mark} {s.dpi:>5}  #{bytes(s.color).hex()}  {"" if on else "(disabled)"}')
+            print(f'Brightness: {round(dev.brightness() * 100 / 255)}%')
+    except p.DeviceError:
+        if _bt_only_status():
+            return
+        raise
     try:
         a = desktop.read()
         print(f'Accel:      {a.profile}, speed {a.speed:+.2f} ({desktop.backend()} desktop setting)')

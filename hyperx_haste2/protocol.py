@@ -35,6 +35,7 @@ from pathlib import Path
 
 VID = 0x03F0
 PIDS = {0x0CBD: 'wireless', 0x0ABD: 'wired'}
+BUS_BT = 0x0005
 REPORT_SIZE = 64
 
 POLLING_TO_CODE = {125: 0x40, 250: 0x20, 500: 0x10, 1000: 0x08, 2000: 0x04, 4000: 0x02}
@@ -48,15 +49,22 @@ class DeviceError(RuntimeError):
     pass
 
 
+class DeviceDisconnected(DeviceError):
+    pass
+
+
 @dataclasses.dataclass
 class HidNode:
     path: str
     pid: int
+    bus: int
     interface: int
     descriptor: bytes
 
     @property
     def mode(self) -> str:
+        if self.bus == BUS_BT:
+            return 'bluetooth'
         return PIDS[self.pid]
 
 
@@ -75,21 +83,35 @@ def list_nodes() -> list[HidNode]:
         parts = props.get('HID_ID', '').split(':')
         if len(parts) != 3 or int(parts[1], 16) != VID or int(parts[2], 16) not in PIDS:
             continue
+        bus = int(parts[0], 16)
         phys = props.get('HID_PHYS', '')
         iface = int(phys.rsplit('input', 1)[1]) if 'input' in phys else -1
         try:
             desc = (entry / 'device' / 'report_descriptor').read_bytes()
         except OSError:
             desc = b''
-        nodes.append(HidNode(f'/dev/{entry.name}', int(parts[2], 16), iface, desc))
+        nodes.append(HidNode(f'/dev/{entry.name}', int(parts[2], 16), bus, iface, desc))
     return nodes
 
 
+def find_bluetooth_node() -> HidNode | None:
+    """Returns the first Bluetooth HID node for the mouse, if connected via BT."""
+    return next((n for n in list_nodes() if n.mode == 'bluetooth'), None)
+
+
 def find_config_node() -> HidNode | None:
-    """The vendor interface that declares the 0x32 (DPI) and 0x50 (power) reports."""
-    for node in list_nodes():
+    """The vendor interface (usage page 0xFF00..0xFFFF) that declares the 0x32 and 0x50 reports.
+    Wired mode uses usage page 0xFF13; wireless uses 0xFF00.
+    Wired is tried first: when the cable is plugged in, the mouse switches to wired mode
+    and the wireless dongle's vendor interface stops responding."""
+    mode_order = {'wired': 0, 'wireless': 1, 'bluetooth': 2}
+    nodes = sorted(list_nodes(), key=lambda n: mode_order.get(n.mode, 9))
+    for node in nodes:
         d = node.descriptor
-        if d.startswith(b'\x06\x00\xff') and b'\x85\x32' in d and b'\x85\x50' in d:
+        # Any vendor-defined usage page: 06 XX FF
+        if len(d) < 3 or d[0] != 0x06 or d[2] != 0xFF:
+            continue
+        if b'\x85\x32' in d and b'\x85\x50' in d:
             return node
     return None
 

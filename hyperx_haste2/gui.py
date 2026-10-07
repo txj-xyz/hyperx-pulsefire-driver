@@ -7,7 +7,7 @@ import queue
 import sys
 import threading
 
-from PyQt6.QtCore import QObject, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QFileSystemWatcher, QObject, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QApplication, QButtonGroup, QCheckBox, QColorDialog, QComboBox, QGridLayout, QGroupBox,
@@ -40,10 +40,16 @@ class Worker(QObject):
                 if self.dev is None:
                     self.dev = p.Device()
                 result, err = fn(self.dev), None
-            except OSError as e:  # unplugged: reopen on the next job
+            except OSError as e:
                 if self.dev:
                     self.dev.close()
-                self.dev, result, err = None, None, p.DeviceError(f'device disconnected ({e})')
+                self.dev, result, err = None, None, p.DeviceDisconnected(f'device disconnected ({e})')
+            except p.DeviceError as e:
+                # Also close on protocol errors (e.g. timeout after a mode switch from
+                # wireless to wired) so find_config_node() re-runs on the next job.
+                if self.dev:
+                    self.dev.close()
+                self.dev, result, err = None, None, e
             except Exception as e:
                 result, err = None, e
             self.done.emit(cb, result, err)
@@ -406,6 +412,10 @@ class Window(QMainWindow):
         # Battery every 60 s; DPI button presses picked up every second.
         self.battery_timer = QTimer(self, interval=60_000, timeout=self._poll_battery)
         self.events_timer = QTimer(self, interval=1000, timeout=self._poll_events)
+        # Watch /dev for hidraw node creation/removal to detect cable plug/unplug instantly.
+        self._current_node: str | None = None
+        self._dev_watcher = QFileSystemWatcher(['/dev'], self)
+        self._dev_watcher.directoryChanged.connect(self._on_dev_changed)
         self.refresh()
 
     # --- worker plumbing --------------------------------------------------
@@ -416,11 +426,23 @@ class Window(QMainWindow):
             cb(result)
 
     def _error(self, err):
-        self.message.setText(f'<span style="color:#e55">{err}</span>')
-        if self.table is None:
+        if isinstance(err, p.DeviceError) or self.table is None:
+            self.table = None
+            self._current_node = None
+            self.battery_timer.stop()
+            self.events_timer.stop()
             for w in self.controls:
                 w.setEnabled(False)
+            bt = p.find_bluetooth_node()
+            if bt:
+                self.device_label.setText(f'Bluetooth · {bt.path}')
+                self.message.setText('Bluetooth connected — plug in the USB cable or wireless dongle to configure.')
+            else:
+                self.device_label.setText('Disconnected' if isinstance(err, p.DeviceDisconnected) else 'Connecting…')
+                self.message.setText(f'<span style="color:#e55">{err}</span>')
             QTimer.singleShot(3000, self.refresh)
+        else:
+            self.message.setText(f'<span style="color:#e55">{err}</span>')
 
     def _say(self, text):
         self.message.setText(text)
@@ -468,6 +490,7 @@ class Window(QMainWindow):
         for i in range(self.polling.count()):
             item = self.polling.model().item(i)
             item.setEnabled(node.mode == 'wireless' or self.polling.itemData(i) <= 1000)
+        self._current_node = node.path
         self._say('Loaded settings from the mouse.')
         self.battery_timer.start()
         self.events_timer.start()
@@ -512,6 +535,12 @@ class Window(QMainWindow):
             self.stage_rows[events[-1]][1].setChecked(True)
             if self.table:
                 self.table.active = events[-1]
+
+    def _on_dev_changed(self, _path: str):
+        """Triggered by inotify when any /dev/hidraw* node appears or disappears."""
+        best = p.find_config_node()
+        if best and self._current_node and best.path != self._current_node:
+            self.worker.submit(lambda dev: (_ for _ in ()).throw(p.DeviceError('connection mode changed')), None)
 
     # --- writes -------------------------------------------------------------
     def _apply_dpi(self, onboard: bool):
