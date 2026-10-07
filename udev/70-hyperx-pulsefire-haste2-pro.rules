@@ -1,0 +1,12 @@
+# HyperX Pulsefire Haste 2 Pro 4K: give the logged-in desktop user access to
+# the mouse's hidraw nodes (needed by this tool AND by NGENUITY under Wine).
+#   03f0:0cbd  2.4 GHz dongle
+#   03f0:0abd  mouse plugged in by USB cable
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="03f0", ATTRS{idProduct}=="0cbd", MODE="0660", TAG+="uaccess"
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="03f0", ATTRS{idProduct}=="0abd", MODE="0660", TAG+="uaccess"
+
+# Button bindings (hyperx-haste2 remap): read the mouse's input node and create the
+# remapped virtual mouse/keyboard through uinput. Same uinput access Steam grants.
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{idVendor}=="03f0", ATTRS{idProduct}=="0cbd", TAG+="uaccess"
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{idVendor}=="03f0", ATTRS{idProduct}=="0abd", TAG+="uaccess"
+KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput"

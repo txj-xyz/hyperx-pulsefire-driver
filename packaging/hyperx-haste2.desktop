@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=HyperX Haste 2 Pro
+GenericName=Mouse Settings
+Comment=DPI, polling rate, lighting and battery for the HyperX Pulsefire Haste 2 Pro 4K
+Exec=hyperx-haste2 gui
+Icon=hyperx-haste2
+Categories=Settings;HardwareSettings;
+Keywords=mouse;dpi;hyperx;pulsefire;rgb;
+StartupWMClass=hyperx-haste2
